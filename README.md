@@ -1,4 +1,4 @@
-# Symmetry Circuits in Transformers (Mechanistic Interpretability Mini-Project)
+# Mechanistic Interpretability Mini-Project -- Symmetry Circuits in Transformers
 
 **Goal:** Test whether tiny transformers trained on conservation-law tasks learn internal linear features/circuits for conserved quantities (e.g., `s=x+y`) and show invariance/equivariance under symmetry-preserving transformations.
 
@@ -20,10 +20,11 @@ pip install -r requirements.txt
 python -m src.gen_data --task REG-SUM --n 20000 --seed 1 --out_dir data
 ```
 
-3. Train the model
+3. Train the model and plot figures
 
 ```
 python -m src.train_transformer --task REG-SUM --epochs 10
+python -m src.plot_reports --task REG-SUM
 ```
 
 4. Run probes (linear feature analysis)
@@ -35,7 +36,7 @@ python -m src.run_probes --task REG-SUM
 5. Run patching (causal ablation)
 
 ```
-python -m src.run_patching --task REG-SUM --data_dir data
+python -m src.run_patching --task REG-SUM
 ```
 
 **Interpretability tools**

@@ -1,4 +1,4 @@
-import math, argparse, os
+import os
 import torch
 import torch.nn as nn
 import json
@@ -6,10 +6,13 @@ from torch.utils.data import Dataset, DataLoader
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Vocabulary and encoding/decoding
-VOCAB = list("0123456789 +-=?()mod")
-ITO = {ch: i for i, ch in enumerate(VOCAB)}  # char to index
-OTI = {i: ch for ch, i in ITO.items()}  # index to char
+# --- vocab with dedicated PAD ---
+VOCAB = ["<PAD>"] + list("0123456789 +-=?()mod")
+PAD_ID = 0
+ITO = {ch: i for i, ch in enumerate(VOCAB)}
+OTI = {i: ch for ch, i in ITO.items()}
+
+S = 2000.0  # scale targets to make MSE loss small and stable
 
 
 def encode(s):
@@ -17,20 +20,34 @@ def encode(s):
     return torch.tensor([ITO[ch] for ch in s], dtype=torch.long)
 
 
-def pad_batch(seqs, pad_id=0):
+def pad_batch(seqs, pad_id=PAD_ID):
     """Pads a batch of variable-length sequences with pad_id to make them the same length.
     Returns a tensor of shape (B, maxlen) and a mask of shape (B, maxlen) indicating valid positions.
     """
     maxlen = max(len(s) for s in seqs)
     out = torch.full((len(seqs), maxlen), pad_id, dtype=torch.long)
     mask = torch.zeros((len(seqs), maxlen), dtype=torch.bool)
+    lens = []
     for i, s in enumerate(seqs):
         out[i, : len(s)] = s
         mask[i, : len(s)] = True
-    return out, mask
+        lens.append(len(s))
+    return out, mask, torch.tensor(lens, dtype=torch.long)
 
 
 class TextDataset(Dataset):
+    """
+    Dataset for regression tasks (REG-SUM, REG-MODK) from TSV files.
+
+    Each line in the TSV file is of the form:
+    input_string \t target_value
+    where input_string is something like "103 + 40 = ?" and target_value is a float.
+
+    Return:
+    - self.inputs: list of encoded input tensors
+    - self.targets: list of float targets
+    """
+
     def __init__(self, tsv_path, task):
         self.task = task
         self.inputs = []
@@ -41,7 +58,7 @@ class TextDataset(Dataset):
                 if not line:
                     continue
                 if task in ("REG-SUM", "REG-MODK"):
-                    x, y = line.split("\t")
+                    x, y = line.split("\t")  # x is input string, y is float target
                     self.inputs.append(encode(x))
                     self.targets.append(float(y))
                 else:
@@ -73,27 +90,31 @@ class TinyTransformer(nn.Module):
         self.ln = nn.LayerNorm(d_model)  # final layer norm
         self.readout = nn.Linear(d_model, 1)  # regression head
 
-    def forward(self, x, return_h=False):
-        bs, T = x.shape  # batch size, sequence length
+    def forward(self, x, lengths=None, return_h=False):
+        B, T = x.shape  # batch size, sequence length
         pos = torch.arange(T, device=x.device).unsqueeze(0)
         h = self.tok(x) + self.pos(pos)
-        # Use key padding mask so pad_id=0 is masked out (we assume '0' char also id 0; ok for toy)
-        kpm = ~(x != 0)
+        kpm = x == PAD_ID  # mask PAD
         h = self.enc(h, src_key_padding_mask=kpm)
-        h = self.ln(h)
-        pooled = h[:, -1, :]  # take the output of the last token
-        y = self.readout(pooled).squeeze(-1)
-        if return_h:  # for probing; so that we can do interpretability on hidden states
-            return y, h
-        return y
+        h = self.ln(h)  # (B, T, d_model)
+        if lengths is None:
+            # fallback: last column (not recommended)
+            pooled = h[:, -1, :]
+        else:
+            idx = (lengths - 1).clamp(min=0)  # [B]
+            pooled = h[torch.arange(B, device=x.device), idx, :]  # [B, d]
+        y = self.readout(pooled).squeeze(-1)  # (bs,) regression output
+        return (
+            (y, h) if return_h else y
+        )  # for probing; so that we can do interpretability on hidden states
 
 
 def collate(batch):
     """Collate function to be used with DataLoader for regression tasks."""
     xs, ys = zip(*batch)
-    X, mask = pad_batch(xs, pad_id=0)
-    y = torch.tensor(ys, dtype=torch.float32)
-    return X, mask, y
+    X, mask, lengths = pad_batch(xs, pad_id=PAD_ID)  # padded input tensor and mask
+    y = torch.tensor(ys, dtype=torch.float32) / S  # regression targets
+    return X, mask, lengths, y
 
 
 def train_regression(args):
@@ -121,12 +142,13 @@ def train_regression(args):
 
     best = float("inf")
     os.makedirs(args.out_dir, exist_ok=True)
+    history = []
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0.0
-        for X, _, y in train_loader:
-            X, y = X.to(device), y.to(device)
-            pred = model(X)
+        for X, _, lengths, y in train_loader:
+            X, lengths, y = X.to(device), lengths.to(device), y.to(device)
+            pred = model(X, lengths=lengths)
             loss = loss_fn(pred, y)
             opt.zero_grad()
             loss.backward()
@@ -137,14 +159,17 @@ def train_regression(args):
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for X, _, y in val_loader:
-                X, y = X.to(device), y.to(device)
-                pred = model(X)
+            for X, _, lengths, y in val_loader:
+                X, lengths, y = X.to(device), lengths.to(device), y.to(device)
+                pred = model(X, lengths=lengths)
                 loss = loss_fn(pred, y)
                 val_loss += loss.item() * X.size(0)
         val_loss /= len(val_dataset)  # average validation loss
 
-        print(f"Epoch {epoch+1}: train {train_loss:.4f} val {val_loss:.4f}")
+        print(f"Epoch {epoch+1}| train loss: {train_loss:.4f} val loss: {val_loss:.4f}")
+        history.append(
+            {"epoch": epoch + 1, "train_mse": train_loss, "val_mse": val_loss}
+        )
 
         # Save best model
         if val_loss < best:
@@ -153,6 +178,8 @@ def train_regression(args):
                 model.state_dict(), os.path.join(args.out_dir, f"{args.task}_best.pt")
             )
     print("Best val MSE:", best)
+    with open(os.path.join(args.out_dir, f"{args.task}_train_history.json"), "w") as f:
+        json.dump(history, f, indent=2)
 
 
 """Classification model and training"""
@@ -188,6 +215,7 @@ class TinyTransformerCls(TinyTransformer):
         y, h = out
         # y here is wrong type (scalar) from parent; we want pooled then 2-logits:
         # So override: recompute pooled on h
+        """still need to fix this to handle padding"""
         pooled = h[:, -1, :]
         logits = self.readout(pooled)
         if return_h:
@@ -205,9 +233,9 @@ def train_classification(args):
 
     def collate(batch):
         seqs, labels = zip(*batch)
-        X, mask = pad_batch(seqs, pad_id=0)
+        X, mask, lengths = pad_batch(seqs, pad_id=0)
         y = torch.tensor(labels, dtype=torch.long)
-        return X, mask, y
+        return X, mask, lengths, y
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.bs, shuffle=True, collate_fn=collate
