@@ -1,0 +1,8 @@
+{
+  "task": "REG-MODK",
+  "depth": 2,
+  "d_model": 256,
+  "n_head": 4,
+  "d_ff": 1024,
+  "seed": 0
+}

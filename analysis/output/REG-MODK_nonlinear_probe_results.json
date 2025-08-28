@@ -1,0 +1,8 @@
+{
+  "task": "REG-MODK",
+  "k": 97,
+  "ridge_r2_numeric_residue": -0.0024858713150024414,
+  "mlp_reg_r2_numeric_residue": 0.4383242130279541,
+  "mlp_cls_accuracy_residue": 0.01,
+  "mlp_cls_accuracy_label_shuffle": 0.015
+}

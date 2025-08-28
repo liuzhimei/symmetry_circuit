@@ -1,0 +1,9 @@
+{
+  "task": "REG-SUM",
+  "alpha": 1.0,
+  "scalar_probe_r2": 0.9981094002723694,
+  "base_mse": 321.7313232421875,
+  "delta_mse_probe_1d": 837.07373046875,
+  "delta_mse_random_1d": 2.67425537109375,
+  "excess_delta_mse": 834.3994750976562
+}

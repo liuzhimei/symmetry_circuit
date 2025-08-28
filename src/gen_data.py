@@ -82,9 +82,9 @@ def main():
         )
         split = int(0.9 * args.n)
         with open(
-            os.path.join(args.out_dir, f"{args.task}_train_large.jsonl"), "w"
+            os.path.join(args.out_dir, f"{args.task}_train.jsonl"), "w"
         ) as ftr, open(
-            os.path.join(args.out_dir, f"{args.task}_val_large.jsonl"), "w"
+            os.path.join(args.out_dir, f"{args.task}_val.jsonl"), "w"
         ) as fva:
             for i in range(args.n):
                 obj = {
@@ -98,10 +98,8 @@ def main():
         lines = textify(xs, ys, zs_true, task=args.task, k=k)
         split = int(0.9 * args.n)
         with open(
-            os.path.join(args.out_dir, f"{args.task}_train_large.tsv"), "w"
-        ) as ftr, open(
-            os.path.join(args.out_dir, f"{args.task}_val_large.tsv"), "w"
-        ) as fva:
+            os.path.join(args.out_dir, f"{args.task}_train.tsv"), "w"
+        ) as ftr, open(os.path.join(args.out_dir, f"{args.task}_val.tsv"), "w") as fva:
             for i, line in enumerate(lines):
                 (ftr if i < split else fva).write(line + "\n")
 

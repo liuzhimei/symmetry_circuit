@@ -1,4 +1,4 @@
-import argparse, os
+import argparse
 from .model import train_regression, train_classification
 
 if __name__ == "__main__":

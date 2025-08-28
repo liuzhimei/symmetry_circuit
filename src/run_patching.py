@@ -31,7 +31,7 @@ def main():
     ap.add_argument("--task", type=str, default="REG-SUM")
     ap.add_argument("--data_dir", type=str, default="data")
     ap.add_argument("--checkpoint_dir", type=str, default="checkpoints")
-    ap.add_argument("--output_dir", type=str, default="analysis")
+    ap.add_argument("--output_dir", type=str, default="src/output")
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

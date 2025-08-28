@@ -143,6 +143,7 @@ def train_regression(args):
     best = float("inf")
     os.makedirs(args.out_dir, exist_ok=True)
     history = []
+    best_epoch = -1
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0.0
@@ -174,12 +175,14 @@ def train_regression(args):
         # Save best model
         if val_loss < best:
             best = val_loss
-            torch.save(
-                model.state_dict(), os.path.join(args.out_dir, f"{args.task}_best.pt")
-            )
-    print("Best val MSE:", best)
+            best_epoch = epoch + 1
+            save_path = os.path.join(args.out_dir, f"{args.task}_best.pt")
+            torch.save(model.state_dict(), save_path)
+    print(f"Saved best model checkpoint in {save_path}")
+    print(f"Best val MSE: {best} at epoch {best_epoch}")
     with open(os.path.join(args.out_dir, f"{args.task}_train_history.json"), "w") as f:
         json.dump(history, f, indent=2)
+    print("Saved training history.")
 
 
 """Classification model and training"""
@@ -210,13 +213,21 @@ class TinyTransformerCls(TinyTransformer):
         super().__init__(vocab_size, d_model, n_layer, n_head, d_ff, pdrop)
         self.readout = nn.Linear(d_model, 2)  # two-class logits
 
-    def forward(self, x, return_h=False):
-        out = super().forward(x, return_h=True)
-        y, h = out
-        # y here is wrong type (scalar) from parent; we want pooled then 2-logits:
-        # So override: recompute pooled on h
-        """still need to fix this to handle padding"""
-        pooled = h[:, -1, :]
+    def forward(self, x, lengths=None, return_h=False):
+        # Run the encoder from parent to get hidden states
+        B, T = x.shape
+        pos = torch.arange(T, device=x.device).unsqueeze(0)
+        h = self.tok(x) + self.pos(pos)
+        kpm = x == PAD_ID
+        h = self.enc(h, src_key_padding_mask=kpm)
+        h = self.ln(h)
+
+        if lengths is None:
+            pooled = h[:, -1, :]
+        else:
+            idx = (lengths - 1).clamp(min=0)
+            pooled = h[torch.arange(B, device=x.device), idx, :]
+
         logits = self.readout(pooled)
         if return_h:
             return logits, h
@@ -231,17 +242,17 @@ def train_classification(args):
     train_dataset = JsonlClsDataset(train_path)
     val_dataset = JsonlClsDataset(val_path)
 
-    def collate(batch):
+    def collate_cls(batch):
         seqs, labels = zip(*batch)
-        X, mask, lengths = pad_batch(seqs, pad_id=0)
+        X, mask, lengths = pad_batch(seqs, pad_id=PAD_ID)
         y = torch.tensor(labels, dtype=torch.long)
         return X, mask, lengths, y
 
     train_loader = DataLoader(
-        train_dataset, batch_size=args.bs, shuffle=True, collate_fn=collate
+        train_dataset, batch_size=args.bs, shuffle=True, collate_fn=collate_cls
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=args.bs, shuffle=False, collate_fn=collate
+        val_dataset, batch_size=args.bs, shuffle=False, collate_fn=collate_cls
     )
 
     model = TinyTransformerCls(
@@ -256,12 +267,13 @@ def train_classification(args):
 
     best = 0.0
     os.makedirs(args.out_dir, exist_ok=True)
+    history = []
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0.0
-        for X, _, y in train_loader:
-            X, y = X.to(device), y.to(device)
-            logits = model(X)
+        for X, _, lengths, y in train_loader:
+            X, lengths, y = X.to(device), lengths.to(device), y.to(device)
+            logits = model(X, lengths=lengths)
             loss = loss_fn(logits, y)
             opt.zero_grad()
             loss.backward()
@@ -274,9 +286,9 @@ def train_classification(args):
         total = 0
         val_loss = 0.0
         with torch.no_grad():
-            for X, _, y in val_loader:
-                X, y = X.to(device), y.to(device)
-                logits = model(X)
+            for X, _, lengths, y in val_loader:
+                X, lengths, y = X.to(device), lengths.to(device), y.to(device)
+                logits = model(X, lengths=lengths)
                 loss = loss_fn(logits, y)
                 val_loss += loss.item() * X.size(0)
                 pred = logits.argmax(dim=-1)
@@ -285,11 +297,23 @@ def train_classification(args):
         val_loss /= len(val_dataset)
         acc = correct / max(1, total)
         print(
-            f"Epoch {epoch+1}: train_loss {train_loss:.4f} val_loss {val_loss:.4f} val_acc {acc:.4f}"
+            f"Epoch {epoch+1} | train_loss: {train_loss:.4f}, val_loss: {val_loss:.4f}, val_acc: {acc:.4f}"
         )
+        history.append(
+            {
+                "epoch": epoch + 1,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "val_acc": acc,
+            }
+        )
+
         if acc > best:
             best = acc
-            torch.save(
-                model.state_dict(), os.path.join(args.out_dir, f"{args.task}_best.pt")
-            )
+            save_path = os.path.join(args.out_dir, f"{args.task}_best.pt")
+            torch.save(model.state_dict(), save_path)
+    print(f"Saved best model checkpoint in {save_path}!")
     print("Best val acc:", best)
+    with open(os.path.join(args.out_dir, f"{args.task}_train_history.json"), "w") as f:
+        json.dump(history, f, indent=2)
+    print("Saved training history.")

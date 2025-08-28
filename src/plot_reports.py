@@ -52,7 +52,7 @@ def main():
     ap.add_argument("--task", default="REG-SUM")
     ap.add_argument("--data_dir", default="data")
     ap.add_argument("--checkpoint_dir", default="checkpoints")
-    ap.add_argument("--out_dir", default="analysis/figures")
+    ap.add_argument("--out_dir", default="src/figures")
     ap.add_argument("--deltas", type=int, nargs="+", default=[-5, -2, -1, 0, 1, 2, 5])
     args = ap.parse_args()
 
@@ -87,7 +87,7 @@ def main():
 
     # Parity
     plt.figure()
-    plt.scatter(y_true, y_pred, s=8, label="predictions")
+    plt.scatter(y_true, y_pred, s=5, alpha=0.8, label="predictions")
     lims = [min(y_true.min(), y_pred.min()), max(y_true.max(), y_pred.max())]
     plt.plot(lims, lims, "r--", label="y=x")
     plt.xlabel("True")
