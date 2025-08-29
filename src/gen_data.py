@@ -20,7 +20,7 @@ def inject_negatives(xs, ys, zs, neg_frac=0.5, k=None, seed=0):
 
     Purpose:
     for classification tasks;
-    This lets you create a dataset with a mix of valid and invalid samples, so the model can be trained to classify equations as true/false.
+    This creates a dataset with a mix of valid and invalid samples, so the model can be trained to classify equations as true/false.
     """
     rng = np.random.default_rng(seed)
     n = len(xs)
